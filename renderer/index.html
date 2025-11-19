@@ -1,0 +1,696 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>OPCUA-RTPM Diagnostic Tool</title>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      transition: background 0.3s ease, color 0.3s ease;
+    }
+
+    /* 🟠 SUNSET LIGHT THEME (NO PURE WHITE) */
+    body.theme-light {
+      background:
+        radial-gradient(circle at 10% 0%, rgba(252, 211, 77, 0.7) 0, transparent 50%),
+        radial-gradient(circle at 100% 0%, rgba(248, 113, 113, 0.6) 0, transparent 50%),
+        radial-gradient(circle at 0% 100%, rgba(251, 146, 60, 0.6) 0, transparent 55%),
+        #fef3c7;
+      color: #111827;
+    }
+
+    /* 🌌 DEEP SKY DARK THEME */
+    body.theme-dark {
+      background:
+        radial-gradient(circle at top left, #1f2937 0, transparent 55%),
+        radial-gradient(circle at 80% 0%, #1e3a8a 0, transparent 55%),
+        radial-gradient(circle at 20% 100%, #0f172a 0, transparent 55%),
+        #020617;
+      color: #e5e7eb;
+    }
+
+    .app-shell {
+      flex: 1;
+      max-width: 1120px;
+      margin: 24px;
+      padding: 20px;
+      border-radius: 18px;
+      backdrop-filter: blur(16px);
+      transition: background-color 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+    }
+
+    body.theme-light .app-shell {
+      background-color: rgba(255, 251, 235, 0.95);
+      border: 1px solid rgba(248, 187, 132, 0.9);
+      box-shadow:
+        0 18px 45px rgba(148, 63, 26, 0.2),
+        0 0 0 1px rgba(253, 230, 138, 0.9);
+    }
+
+    body.theme-dark .app-shell {
+      background-color: rgba(15, 23, 42, 0.92);
+      border: 1px solid rgba(30, 64, 175, 0.6);
+      box-shadow:
+        0 18px 45px rgba(0, 0, 0, 0.7),
+        0 0 0 1px rgba(15, 23, 42, 0.9);
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .title-block h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .title-pill {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(249, 115, 22, 0.7);
+      background: linear-gradient(90deg, rgba(248, 171, 77, 0.2), rgba(251, 113, 133, 0.25));
+      color: #9a3412;
+    }
+
+    body.theme-dark .title-pill {
+      border-color: rgba(129, 140, 248, 0.7);
+      background: linear-gradient(90deg, rgba(129, 140, 248, 0.18), rgba(56, 189, 248, 0.2));
+      color: #e0e7ff;
+    }
+
+    .title-block p {
+      margin: 4px 0 0;
+      font-size: 11px;
+      opacity: 0.85;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .theme-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(248, 187, 132, 0.9);
+      font-size: 11px;
+      cursor: pointer;
+      background: linear-gradient(135deg, rgba(255, 237, 213, 0.96), rgba(254, 215, 170, 0.9));
+      color: #7c2d12;
+      transition: background 0.2s ease, border-color 0.2s ease, transform 0.1s ease, box-shadow 0.15s ease;
+      box-shadow: 0 8px 20px rgba(248, 171, 77, 0.35);
+    }
+
+    body.theme-dark .theme-toggle {
+      border-color: rgba(51, 65, 85, 0.9);
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 64, 175, 0.55));
+      color: #e5e7eb;
+      box-shadow: 0 10px 26px rgba(15, 23, 42, 0.9);
+    }
+
+    .theme-toggle:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 12px 26px rgba(148, 63, 26, 0.35);
+    }
+
+    body.theme-dark .theme-toggle:hover {
+      box-shadow: 0 14px 32px rgba(15, 23, 42, 0.95);
+    }
+
+    .theme-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: radial-gradient(circle at 30% 30%, #facc15 0, #fb923c 45%, #f97316 100%);
+      box-shadow: 0 0 6px rgba(249, 115, 22, 0.8);
+    }
+
+    body.theme-dark .theme-dot {
+      background: radial-gradient(circle at 30% 30%, #38bdf8 0, #6366f1 45%, #6366f1 100%);
+      box-shadow: 0 0 6px rgba(56, 189, 248, 0.7);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    @media (max-width: 840px) {
+      .grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    .card {
+      border-radius: 14px;
+      padding: 14px 14px 12px;
+      border: 1px solid rgba(248, 187, 132, 0.9);
+      background: linear-gradient(
+        135deg,
+        rgba(255, 247, 237, 0.98),
+        rgba(254, 243, 199, 0.98)
+      );
+      box-shadow: 0 10px 26px rgba(148, 63, 26, 0.18);
+      transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    body.theme-dark .card {
+      border-color: rgba(30, 64, 175, 0.7);
+      background: linear-gradient(145deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.98));
+      box-shadow:
+        0 14px 30px rgba(0, 0, 0, 0.7),
+        0 0 0 1px rgba(15, 23, 42, 0.9);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      opacity: 0.9;
+    }
+
+    .card-subtext {
+      font-size: 11px;
+      opacity: 0.78;
+      margin-bottom: 8px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 10px 12px;
+      font-size: 12px;
+    }
+
+    .form-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .form-row-full {
+      grid-column: 1 / -1;
+    }
+
+    .form-row label {
+      font-size: 11px;
+      font-weight: 600;
+      opacity: 0.86;
+    }
+
+    .form-row small {
+      font-size: 10px;
+      opacity: 0.7;
+    }
+
+    input {
+      border-radius: 8px;
+      border: 1px solid rgba(248, 187, 132, 0.95);
+      padding: 6px 8px;
+      font-size: 12px;
+      outline: none;
+      background: rgba(254, 243, 199, 0.97);
+      color: inherit;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+    }
+
+    input:focus {
+      border-color: #fb923c;
+      box-shadow: 0 0 0 1px rgba(248, 171, 77, 0.65);
+      background: #fed7aa;
+    }
+
+    body.theme-dark input {
+      border-color: rgba(51, 65, 85, 0.9);
+      background: rgba(15, 23, 42, 0.95);
+    }
+
+    body.theme-dark input:focus {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.6);
+      background: #020617;
+    }
+
+    /* ---- FIXED OPC.TCP PREFIX WRAPPER ---- */
+    .endpoint-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .endpoint-prefix {
+      font-size: 12px;
+      padding: 6px 8px;
+      border-radius: 8px 0 0 8px;
+      border: 1px solid rgba(248, 187, 132, 0.95);
+      border-right: none;
+      background: rgba(254, 243, 199, 0.97);
+      white-space: nowrap;
+    }
+
+    body.theme-dark .endpoint-prefix {
+      border-color: rgba(51, 65, 85, 0.9);
+      background: rgba(15, 23, 42, 0.95);
+    }
+
+    .endpoint-wrapper input {
+      border-radius: 0 8px 8px 0;
+      flex: 1;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .btn {
+      border-radius: 999px;
+      border: none;
+      font-size: 12px;
+      padding: 7px 14px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 500;
+      transition: transform 0.08s ease, box-shadow 0.12s ease, background 0.12s ease, opacity 0.12s ease;
+      white-space: nowrap;
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+      box-shadow: none;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #f97316, #ef4444);
+      color: #111827;
+      box-shadow:
+        0 12px 28px rgba(248, 113, 22, 0.45),
+        0 0 0 1px rgba(254, 202, 138, 0.8);
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #ea580c, #dc2626);
+    }
+
+    .btn-primary[disabled] {
+      opacity: 0.6;
+      cursor: default;
+      box-shadow: none;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      border: 1px solid rgba(248, 113, 113, 0.9);
+      color: #991b1b;
+      box-shadow: 0 8px 18px rgba(248, 113, 113, 0.28);
+    }
+
+    body.theme-dark .btn-secondary {
+      border-color: rgba(248, 113, 113, 0.7);
+      color: #fecaca;
+      background: rgba(127, 29, 29, 0.3);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(254, 226, 226, 0.7);
+    }
+
+    body.theme-dark .btn-secondary:hover {
+      background: rgba(127, 29, 29, 0.6);
+    }
+
+    .btn-icon {
+      font-size: 13px;
+    }
+
+    .status-chip {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.7);
+      opacity: 0.9;
+    }
+
+    .status-chip-idle {
+      background: rgba(148, 163, 184, 0.13);
+    }
+
+    .status-chip-running {
+      background: rgba(34, 197, 94, 0.16);
+      border-color: rgba(34, 197, 94, 0.7);
+      color: #166534;
+    }
+
+    .status-chip-complete {
+      background: rgba(56, 189, 248, 0.16);
+      border-color: rgba(56, 189, 248, 0.7);
+      color: #0e7490;
+    }
+
+    .status-chip-error {
+      background: rgba(248, 113, 113, 0.18);
+      border-color: rgba(248, 113, 113, 0.9);
+      color: #b91c1c;
+    }
+
+    body.theme-dark .status-chip-running {
+      color: #bbf7d0;
+    }
+
+    body.theme-dark .status-chip-complete {
+      color: #7dd3fc;
+    }
+
+    body.theme-dark .status-chip-error {
+      color: #fecaca;
+    }
+
+    .progress-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      margin-bottom: 6px;
+      opacity: 0.85;
+    }
+
+    #progressBar {
+      width: 100%;
+      height: 8px;
+      background: rgba(148, 163, 184, 0.35);
+      border-radius: 999px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    #progressFill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #22c55e, #fbbf24, #fb923c);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s linear infinite;
+      transition: width 0.2s ease-out;
+    }
+
+    @keyframes shimmer {
+      0% { background-position: 0% 50%; }
+      100% { background-position: 200% 50%; }
+    }
+
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+      gap: 16px;
+      margin-top: 4px;
+    }
+
+    @media (max-width: 840px) {
+      .bottom-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    #results {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+      border-radius: 10px;
+      padding: 8px;
+      max-height: 280px;
+      overflow: auto;
+      border: 1px dashed rgba(248, 171, 77, 0.95);
+      background: transparent;
+    }
+
+    body.theme-light #results {
+      background: rgba(254, 243, 199, 0.98);
+      color: #111827;
+    }
+
+    body.theme-dark #results {
+      background: rgba(15, 23, 42, 0.9);
+      border-color: rgba(30, 64, 175, 0.9);
+      color: #e5e7eb;
+    }
+
+    .helper-text {
+      font-size: 10px;
+      opacity: 0.7;
+      margin-top: 2px;
+    }
+
+    /* Live output entries */
+    #resultsEmpty {
+      color: #6b7280;
+      font-size: 11px;
+    }
+
+    .log-entry {
+      border-radius: 6px;
+      padding: 6px 8px;
+      margin-bottom: 6px;
+      border-left: 4px solid rgba(209, 213, 219, 0.9);
+      background: rgba(243, 244, 246, 0.9);
+    }
+
+    .log-entry-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 2px;
+      font-size: 11px;
+    }
+
+    .log-entry-title {
+      font-weight: 600;
+    }
+
+    .log-entry-time {
+      font-size: 10px;
+      opacity: 0.7;
+      white-space: nowrap;
+    }
+
+    .log-entry-body {
+      font-size: 11px;
+    }
+
+    .log-entry--info {
+      border-left-color: #3b82f6;
+      background: rgba(239, 246, 255, 0.95);
+      color: #1d4ed8;
+    }
+
+    .log-entry--success {
+      border-left-color: #22c55e;
+      background: rgba(236, 253, 245, 0.95);
+      color: #166534;
+    }
+
+    .log-entry--warn {
+      border-left-color: #eab308;
+      background: rgba(254, 252, 232, 0.95);
+      color: #713f12;
+    }
+
+    .log-entry--error {
+      border-left-color: #ef4444;
+      background: rgba(254, 242, 242, 0.95);
+      color: #7f1d1d;
+    }
+
+    /* 💜 Worker-finished = purple */
+    .log-entry--worker {
+      border-left-color: #a855f7;
+      background: rgba(245, 243, 255, 0.95);
+      color: #6b21a8;
+    }
+
+    body.theme-dark .log-entry--info {
+      border-left-color: #60a5fa;
+      background: rgba(15, 23, 42, 0.9);
+      color: #bfdbfe;
+    }
+
+    body.theme-dark .log-entry--success {
+      border-left-color: #22c55e;
+      background: rgba(22, 101, 52, 0.25);
+      color: #bbf7d0;
+    }
+
+    body.theme-dark .log-entry--warn {
+      border-left-color: #eab308;
+      background: rgba(113, 63, 18, 0.35);
+      color: #facc15;
+    }
+
+    body.theme-dark .log-entry--error {
+      border-left-color: #ef4444;
+      background: rgba(127, 29, 29, 0.35);
+      color: #fecaca;
+    }
+
+    body.theme-dark .log-entry--worker {
+      border-left-color: #c4b5fd;
+      background: rgba(46, 16, 101, 0.45);
+      color: #e9d5ff;
+    }
+  </style>
+</head>
+<body class="theme-light">
+  <div class="app-shell">
+    <header class="header">
+      <div class="title-block">
+        <h1>
+          OPCUA-RTPM Diagnostic Tool
+          <span class="title-pill">Callback Path Probe</span>
+        </h1>
+        <p>Validate that the OPC-UA server can reach back to this machine for callbacks.</p>
+      </div>
+      <div class="header-controls">
+        <button id="themeToggle" class="theme-toggle" type="button">
+          <span class="theme-dot"></span>
+          <span>Toggle theme</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="grid">
+      <div class="card">
+        <div class="card-header">
+          <span>Connection & Subscription Test</span>
+          <span id="statusChip" class="status-chip status-chip-idle">Idle</span>
+        </div>
+        <p class="card-subtext">
+          Enter the OPC-UA server endpoint to probe. The tool will connect, create a subscription,
+          capture listening ports, and watch for callback attempts.
+        </p>
+
+        <div class="form-grid">
+          <div class="form-row form-row-full">
+            <label for="server">OPC-UA Server Endpoint</label>
+            <div class="endpoint-wrapper">
+              <span class="endpoint-prefix">opc.tcp://</span>
+              <input id="server" placeholder="192.168.1.50" value="localhost">
+            </div>
+            <small>
+              Enter the server hostname or IP only. The opc.tcp:// prefix is fixed, and the port will come from the field below.
+            </small>
+          </div>
+
+          <div class="form-row">
+            <label for="port">Port</label>
+            <input id="port" placeholder="4840" value="4840">
+          </div>
+
+          <div class="form-row">
+            <label for="publishing">Publishing Interval (ms)</label>
+            <input id="publishing" type="number" value="250">
+            <small>Typical range: 50–10000 ms.</small>
+          </div>
+
+          <div class="form-row form-row-full">
+            <label for="nodeid">Monitored NodeId (optional)</label>
+            <input id="nodeid" placeholder="ns=0;i=2258">
+            <small>Defaults to ns=0;i=2258 (ServerStatus_CurrentTime) if left blank.</small>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button id="runBtn" class="btn btn-primary" type="button">
+            <span class="btn-icon">▶</span>
+            <span>Run Callback Path Probe</span>
+          </button>
+          <button id="cancelBtn" class="btn btn-secondary" type="button">
+            <span class="btn-icon">✕</span>
+            <span>Cancel</span>
+          </button>
+        </div>
+        <div class="helper-text">Shortcut: Ctrl+Enter to start the probe.</div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span>Probe Progress</span>
+        </div>
+        <div style="font-size:12px; margin-bottom:8px;">
+          <div class="progress-label">
+            <span id="currentTask">Idle</span>
+            <span id="progressPercent">0%</span>
+          </div>
+          <div id="progressBar"><div id="progressFill"></div></div>
+        </div>
+        <p class="helper-text">
+          The probe connects, queries endpoints, opens a subscription, compares listening ports, and
+          monitors for server→client callback attempts.
+        </p>
+      </div>
+    </section>
+
+    <section class="bottom-grid">
+      <div class="card">
+        <div class="card-header">
+          <span>Live Output</span>
+        </div>
+        <p class="card-subtext">
+          Color-coded log of what the probe is doing in plain language. Green = good, yellow = check, red = problem.
+        </p>
+        <div id="results">
+          <div id="resultsEmpty">No results yet.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span>Notes</span>
+        </div>
+        <ul style="font-size:11px; padding-left:18px; margin:4px 0 0;">
+          <li>Run this tool on the client machine to verify that the server can reach its callback listener.</li>
+          <li>Endpoint security, listening ports, and connection attempts are all captured into the log file.</li>
+          <li>Use the colored entries to quickly spot which phases passed and which need attention.</li>
+        </ul>
+      </div>
+    </section>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

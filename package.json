@@ -1,0 +1,21 @@
+{
+    "name": "opcua-endpoint-diagnostics",
+    "version": "0.1.0",
+    "description": "A Windows desktop tool that verifies and troubleshoots connectivity between OPC UA clients and servers, testing endpoint security and callback paths.",
+    "author": "github.com/acarioti4",
+    "main": "main.js",
+    "scripts": {
+      "start": "electron .",
+      "build": "electron-builder"
+    },
+    "dependencies": {
+      "electron-log": "^4.4.6",
+      "node-opcua": "^2.88.0"
+    },
+    "devDependencies": {
+      "electron": "^26.0.0",
+      "electron-builder": "^23.6.0"
+    },
+    "license": "MIT"
+  }
+  
