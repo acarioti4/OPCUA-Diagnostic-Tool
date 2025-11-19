@@ -22,56 +22,349 @@ process.on('message', async (msg) => {
     `opcua-endpoint-diagnostic_${new Date().toISOString().replace(/[:.]/g,'-')}.log`
   );
 
-  function appendLog(text) {
+  const errors = [];
+  const warnings = [];
+
+  function appendLog(text, isDetailed = false) {
+    // Only send simple messages to live output (for backward compatibility)
+    if (!isDetailed) {
+      send('log', { message: text });
+    }
+    // Always write to log file
     fs.appendFileSync(logfile, `[${new Date().toISOString()}] ${text}\n`);
-    send('log', { message: text });
   }
 
-  appendLog('Probe started: ' + JSON.stringify(config));
+  function appendDetailedLog(title, data, summary = null) {
+    appendLog(`\n========== ${title} ==========`, true);
+    if (summary) {
+      appendLog(`Summary: ${summary}`, true);
+    }
+    if (data !== null && data !== undefined) {
+      try {
+        const jsonStr = JSON.stringify(data, null, 2);
+        appendLog(`Detailed Data:\n${jsonStr}`, true);
+      } catch (e) {
+        appendLog(`Detailed Data (stringified): ${String(data)}`, true);
+      }
+    }
+    appendLog(`========== End ${title} ==========\n`, true);
+  }
+
+  function logError(error, context = '') {
+    const errorObj = {
+      timestamp: new Date().toISOString(),
+      context,
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+      name: error?.name || 'Error',
+      code: error?.code || null,
+      fullError: String(error)
+    };
+    errors.push(errorObj);
+    
+    appendLog(`\n========== ERROR DETECTED ==========`, true);
+    appendLog(`Context: ${context}`, true);
+    appendLog(`Error Name: ${errorObj.name}`, true);
+    appendLog(`Error Message: ${errorObj.message}`, true);
+    if (errorObj.code) {
+      appendLog(`Error Code: ${errorObj.code}`, true);
+    }
+    if (errorObj.stack) {
+      appendLog(`Stack Trace:\n${errorObj.stack}`, true);
+    } else {
+      appendLog(`Full Error: ${errorObj.fullError}`, true);
+    }
+    appendLog(`========== END ERROR ==========\n`, true);
+  }
+
+  function logWarning(warning, context = '') {
+    const warningObj = {
+      timestamp: new Date().toISOString(),
+      context,
+      message: String(warning)
+    };
+    warnings.push(warningObj);
+    appendLog(`[WARNING] ${context}: ${warningObj.message}`, true);
+  }
+
+  function writeErrorSummary() {
+    if (errors.length === 0 && warnings.length === 0) {
+      return;
+    }
+
+    appendLog(`\n\n========== ERROR AND WARNING SUMMARY ==========`, true);
+    
+    if (errors.length > 0) {
+      appendLog(`\nTotal Errors: ${errors.length}`, true);
+      errors.forEach((err, idx) => {
+        appendLog(`\n--- Error ${idx + 1} ---`, true);
+        appendLog(`  Time: ${err.timestamp}`, true);
+        appendLog(`  Context: ${err.context || 'Unknown'}`, true);
+        appendLog(`  Type: ${err.name}`, true);
+        appendLog(`  Message: ${err.message}`, true);
+        if (err.code) {
+          appendLog(`  Code: ${err.code}`, true);
+        }
+        if (err.stack) {
+          appendLog(`  Stack Trace:\n${err.stack.split('\n').map(l => '    ' + l).join('\n')}`, true);
+        }
+      });
+    }
+
+    if (warnings.length > 0) {
+      appendLog(`\nTotal Warnings: ${warnings.length}`, true);
+      warnings.forEach((warn, idx) => {
+        appendLog(`\n--- Warning ${idx + 1} ---`, true);
+        appendLog(`  Time: ${warn.timestamp}`, true);
+        appendLog(`  Context: ${warn.context || 'Unknown'}`, true);
+        appendLog(`  Message: ${warn.message}`, true);
+      });
+    }
+
+    appendLog(`\n========== END ERROR AND WARNING SUMMARY ==========\n\n`, true);
+  }
+
+  appendLog('Probe started');
+  appendDetailedLog('Probe Configuration', config, 'Initial probe configuration parameters');
 
   try {
     // Step 1: Query endpoints
     send('progress', { progress: 10, task: 'Querying endpoints' });
     appendLog('Querying endpoints');
-    const endpoints = await queryEndpoints(config.server, config.port);
-    appendLog('Endpoints received');
+    const endpointUrl = normalizeEndpoint(config.server, config.port);
+    appendLog(`Connecting to endpoint: ${endpointUrl}`);
+    
+    let endpoints;
+    try {
+      endpoints = await queryEndpoints(config.server, config.port);
+      appendLog(`Successfully retrieved ${endpoints?.length || 0} endpoint(s)`);
+      
+      // Detailed endpoint analysis
+      if (endpoints && endpoints.length > 0) {
+        const endpointSummary = {
+          total: endpoints.length,
+          securityPolicies: {},
+          securityModes: {},
+          userTokenTypes: []
+        };
+        const userTokenTypesSet = new Set();
+        
+        endpoints.forEach((ep, idx) => {
+          const policy = ep.securityPolicyUri || 'Unknown';
+          const mode = ep.securityMode || 'Unknown';
+          endpointSummary.securityPolicies[policy] = (endpointSummary.securityPolicies[policy] || 0) + 1;
+          endpointSummary.securityModes[mode] = (endpointSummary.securityModes[mode] || 0) + 1;
+          if (ep.userIdentityTokens) {
+            ep.userIdentityTokens.forEach(t => userTokenTypesSet.add(t));
+          }
+        });
+        
+        endpointSummary.userTokenTypes = Array.from(userTokenTypesSet);
+        
+        appendDetailedLog('Endpoint Query Results', {
+          endpointUrl,
+          endpointCount: endpoints.length,
+          summary: endpointSummary,
+          endpoints: endpoints
+        }, `Found ${endpoints.length} endpoint(s) from ${endpointUrl}`);
+      } else {
+        logWarning('No endpoints returned from server', 'Endpoint Query');
+        appendDetailedLog('Endpoint Query Results', { endpointUrl, endpoints: [] }, 'No endpoints found - server may be unreachable or endpoint URL incorrect');
+      }
+    } catch (err) {
+      logError(err, 'Endpoint Query');
+      throw err;
+    }
+    
     send('result-partial', { payload: { endpoints } });
 
     // Step 2: Record listening ports before subscription
     send('progress', { progress: 25, task: 'Recording listening ports (before)' });
-    const beforeListeners = await getListeningPorts();
-    appendLog('Before listening ports captured');
+    appendLog('Capturing baseline listening ports');
+    
+    let beforeListeners;
+    try {
+      beforeListeners = await getListeningPorts();
+      const portCount = beforeListeners?.length || 0;
+      appendLog(`Captured ${portCount} listening socket(s) before subscription`);
+      
+      const portSummary = {
+        total: portCount,
+        uniquePorts: [...new Set(beforeListeners.map(l => l.localPort))].filter(p => p),
+        uniqueAddresses: [...new Set(beforeListeners.map(l => l.localAddress))].filter(a => a),
+        protocols: [...new Set(beforeListeners.map(l => l.proto))].filter(p => p),
+        pids: [...new Set(beforeListeners.map(l => l.pid))].filter(p => p)
+      };
+      
+      appendDetailedLog('Baseline Listening Ports', {
+        timestamp: new Date().toISOString(),
+        summary: portSummary,
+        listeners: beforeListeners
+      }, `Baseline: ${portCount} listening socket(s) on ${portSummary.uniquePorts.length} unique port(s)`);
+    } catch (err) {
+      logError(err, 'Baseline Port Capture');
+      beforeListeners = [];
+      logWarning('Failed to capture baseline ports, continuing with empty array', 'Baseline Port Capture');
+    }
+    
     send('result-partial', { payload: { beforeListeners } });
 
     // Step 3: Create subscription (attempt)
     send('progress', { progress: 45, task: 'Creating subscription and monitored item' });
-    appendLog('Creating subscription');
-    const subscriptionResult = await createSubscriptionAndMonitor(config);
-    appendLog('Subscription created/attempted');
+    appendLog('Creating subscription and monitored item');
+    appendLog(`Target node: ${config.nodeId || 'ns=0;i=2258'}`);
+    appendLog(`Publishing interval: ${config.publishingInterval || 250}ms`);
+    
+    let subscriptionResult;
+    try {
+      subscriptionResult = await createSubscriptionAndMonitor(config);
+      
+      if (subscriptionResult.success) {
+        appendLog(`Subscription created successfully, monitored node: ${subscriptionResult.nodeMonitored}`);
+        appendDetailedLog('Subscription Result', subscriptionResult, 'Subscription and monitored item created successfully');
+      } else {
+        logError(new Error(subscriptionResult.error || 'Subscription failed'), 'Subscription Creation');
+        appendDetailedLog('Subscription Result', subscriptionResult, 'Subscription creation failed');
+      }
+    } catch (err) {
+      logError(err, 'Subscription Creation');
+      subscriptionResult = { success: false, error: String(err) };
+      appendDetailedLog('Subscription Result', subscriptionResult, 'Exception during subscription creation');
+    }
+    
     send('result-partial', { payload: { subscriptionResult } });
 
     // Step 4: Record listening ports after subscription
     send('progress', { progress: 65, task: 'Recording listening ports (after)' });
-    const afterListeners = await getListeningPorts();
-    appendLog('After listening ports captured');
+    appendLog('Capturing listening ports after subscription');
+    
+    let afterListeners;
+    try {
+      afterListeners = await getListeningPorts();
+      const portCount = afterListeners?.length || 0;
+      appendLog(`Captured ${portCount} listening socket(s) after subscription`);
+      
+      // Compare with baseline
+      const baselinePorts = new Set((beforeListeners || []).map(l => `${l.localAddress}:${l.localPort}`));
+      const afterPorts = new Set((afterListeners || []).map(l => `${l.localAddress}:${l.localPort}`));
+      const newPorts = [...afterPorts].filter(p => !baselinePorts.has(p));
+      const removedPorts = [...baselinePorts].filter(p => !afterPorts.has(p));
+      
+      const portSummary = {
+        total: portCount,
+        uniquePorts: [...new Set(afterListeners.map(l => l.localPort))].filter(p => p),
+        uniqueAddresses: [...new Set(afterListeners.map(l => l.localAddress))].filter(a => a),
+        protocols: [...new Set(afterListeners.map(l => l.proto))].filter(p => p),
+        pids: [...new Set(afterListeners.map(l => l.pid))].filter(p => p),
+        comparison: {
+          newPorts: newPorts,
+          removedPorts: removedPorts,
+          netChange: portCount - (beforeListeners?.length || 0)
+        }
+      };
+      
+      appendDetailedLog('Post-Subscription Listening Ports', {
+        timestamp: new Date().toISOString(),
+        summary: portSummary,
+        listeners: afterListeners,
+        baselineComparison: {
+          beforeCount: beforeListeners?.length || 0,
+          afterCount: portCount,
+          newPortsCount: newPorts.length,
+          removedPortsCount: removedPorts.length
+        }
+      }, `After subscription: ${portCount} listening socket(s), ${newPorts.length} new port(s) detected`);
+    } catch (err) {
+      logError(err, 'Post-Subscription Port Capture');
+      afterListeners = [];
+      logWarning('Failed to capture post-subscription ports, continuing with empty array', 'Post-Subscription Port Capture');
+    }
+    
     send('result-partial', { payload: { afterListeners } });
 
     // Step 5: Monitor for incoming connections from server IP (30s)
     send('progress', { progress: 75, task: 'Monitoring incoming connection attempts (30s)' });
-    appendLog('Monitoring incoming connections');
+    appendLog('Monitoring incoming connections from server');
     const serverIp = extractHostFromEndpoint(config.server) || null;
     const serverPort = config.port;
-    const connections = await monitorConnectionAttempts(serverIp, serverPort, 30 * 1000);
-    appendLog('Monitoring complete');
+    appendLog(`Monitoring for connections from server IP: ${serverIp || 'Unknown'} (port: ${serverPort})`);
+    appendLog('Monitoring duration: 30 seconds');
+    
+    let connections;
+    try {
+      connections = await monitorConnectionAttempts(serverIp, serverPort, 30 * 1000);
+      const connCount = connections?.length || 0;
+      appendLog(`Monitoring complete: ${connCount} connection attempt(s) detected`);
+      
+      if (connCount > 0) {
+        const connSummary = {
+          total: connCount,
+          uniqueRemoteAddresses: [...new Set(connections.map(c => c.remoteAddress))].filter(a => a),
+          uniqueLocalPorts: [...new Set(connections.map(c => c.localPort))].filter(p => p),
+          uniqueStates: [...new Set(connections.map(c => c.state))].filter(s => s),
+          uniquePids: [...new Set(connections.map(c => c.pid))].filter(p => p),
+          timeRange: {
+            first: connections[0]?.timestamp || null,
+            last: connections[connCount - 1]?.timestamp || null
+          }
+        };
+        
+        appendDetailedLog('Incoming Connection Monitoring Results', {
+          serverIp,
+          serverPort,
+          monitoringDuration: '30 seconds',
+          summary: connSummary,
+          connections: connections
+        }, `Detected ${connCount} incoming connection attempt(s) from server IP ${serverIp}`);
+      } else {
+        appendDetailedLog('Incoming Connection Monitoring Results', {
+          serverIp,
+          serverPort,
+          monitoringDuration: '30 seconds',
+          connections: []
+        }, `No incoming connections detected from server IP ${serverIp} - server may not be attempting callbacks or firewall may be blocking`);
+      }
+    } catch (err) {
+      logError(err, 'Connection Monitoring');
+      connections = [];
+      logWarning('Failed to monitor connections, continuing with empty array', 'Connection Monitoring');
+    }
+    
     send('result-partial', { payload: { connections } });
 
     // Final aggregation
     const final = { endpoints, beforeListeners, subscriptionResult, afterListeners, connections };
+    
+    // Write comprehensive final summary
+    appendLog('\n\n========== PROBE COMPLETION SUMMARY ==========', true);
+    appendLog(`Probe completed at: ${new Date().toISOString()}`, true);
+    appendLog(`Configuration: ${JSON.stringify(config)}`, true);
+    appendLog(`Endpoints found: ${endpoints?.length || 0}`, true);
+    appendLog(`Baseline listeners: ${beforeListeners?.length || 0}`, true);
+    appendLog(`Post-subscription listeners: ${afterListeners?.length || 0}`, true);
+    appendLog(`Subscription success: ${subscriptionResult?.success ? 'Yes' : 'No'}`, true);
+    appendLog(`Incoming connections detected: ${connections?.length || 0}`, true);
+    appendLog(`========== END PROBE COMPLETION SUMMARY ==========\n`, true);
+    
+    // Write error/warning summary
+    writeErrorSummary();
+    
+    // Write complete final data dump
+    appendDetailedLog('Complete Probe Results', final, 'Complete aggregated results from all probe steps');
+    
     send('result-final', { payload: final });
-    appendLog('Probe finished');
+    appendLog('Probe finished successfully');
     process.exit(0);
   } catch (err) {
-    appendLog('Probe error: ' + (err.stack || err.message || err));
+    logError(err, 'Probe Execution');
+    appendLog('\n\n========== PROBE FAILED ==========', true);
+    appendLog(`Probe failed at: ${new Date().toISOString()}`, true);
+    appendLog(`Configuration: ${JSON.stringify(config)}`, true);
+    appendLog(`========== END PROBE FAILED ==========\n`, true);
+    
+    // Write error/warning summary
+    writeErrorSummary();
+    
     send('error', { error: String(err) });
     process.exit(1);
   }
