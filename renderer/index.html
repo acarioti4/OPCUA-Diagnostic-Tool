@@ -265,7 +265,7 @@
       background: #020617;
     }
 
-    /* ---- FIXED OPC.TCP PREFIX WRAPPER ---- */
+    /* Fixed opc.tcp:// prefix wrapper - prevents incorrect protocol entry */
     .endpoint-wrapper {
       display: flex;
       align-items: center;
@@ -476,7 +476,6 @@
       margin-top: 2px;
     }
 
-    /* Live output entries */
     #resultsEmpty {
       color: #6b7280;
       font-size: 11px;
@@ -537,7 +536,7 @@
       color: #7f1d1d;
     }
 
-    /* 💜 Worker-finished = purple */
+    /* Log entry severity classes: info (blue), success (green), warn (yellow), error (red), worker (purple) */
     .log-entry--worker {
       border-left-color: #a855f7;
       background: rgba(245, 243, 255, 0.95);

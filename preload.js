@@ -1,3 +1,7 @@
+/**
+ * Preload script - Secure IPC bridge
+ * Exposes controlled API to renderer (contextIsolation security pattern)
+ */
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {

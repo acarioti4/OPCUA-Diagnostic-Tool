@@ -1,12 +1,22 @@
 /// main.js
+/**
+ * Main Electron process - manages window, IPC, and worker process
+ * Architecture: Main Process (this) -> Renderer Process (UI) -> Worker Process (OPC-UA diagnostics)
+ */
+
 const { app, BrowserWindow, ipcMain, Menu } = require('electron');
 const path = require('path');
 const { fork } = require('child_process');
 const log = require('electron-log');
 
 let mainWindow;
-let worker; // child process
+let worker;
 
+/**
+ * Creates application window with security settings:
+ * - nodeIntegration: false, contextIsolation: true (Electron security best practices)
+ * - preload.js provides controlled API bridge to renderer
+ */
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1000,
@@ -18,16 +28,12 @@ function createWindow() {
     }
   });
 
-  // Hide menu bar
   mainWindow.setMenuBarVisibility(false);
-
   mainWindow.loadFile('renderer/index.html');
 }
 
 app.whenReady().then(() => {
-  // Remove global application menu (File/Edit/etc.)
   Menu.setApplicationMenu(null);
-
   createWindow();
 
   app.on('activate', () => {
@@ -39,10 +45,14 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+/**
+ * IPC handler: Start diagnostic probe
+ * Spawns worker process in separate Node.js process to keep UI responsive
+ * and isolate OPC-UA operations. Relays messages: worker -> main -> renderer
+ */
 ipcMain.on('run-probe', (event, probeConfig) => {
   log.info('Main: run-probe received', probeConfig);
 
-  // Fork worker
   if (worker) {
     worker.kill();
     worker = null;
@@ -50,7 +60,6 @@ ipcMain.on('run-probe', (event, probeConfig) => {
 
   worker = fork(path.join(__dirname, 'worker.js'));
 
-  // Relay messages from worker to renderer
   worker.on('message', (msg) => {
     if (mainWindow && mainWindow.webContents) {
       mainWindow.webContents.send('probe-event', msg);
@@ -64,7 +73,6 @@ ipcMain.on('run-probe', (event, probeConfig) => {
     worker = null;
   });
 
-  // Send configuration to worker
   worker.send({
     type: 'start',
     config: probeConfig,

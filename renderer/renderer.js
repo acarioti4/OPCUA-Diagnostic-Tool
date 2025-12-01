@@ -1,3 +1,8 @@
+/**
+ * Renderer process - UI logic and event handling
+ * Communication: renderer -> main -> worker -> main -> renderer
+ */
+
 const runBtn = document.getElementById('runBtn');
 const cancelBtn = document.getElementById('cancelBtn');
 const serverEl = document.getElementById('server');
@@ -11,8 +16,6 @@ const resultsEl = document.getElementById('results');
 const statusChip = document.getElementById('statusChip');
 const themeToggle = document.getElementById('themeToggle');
 
-// ---------- PROGRESS / STATUS ----------
-
 function setProgress(percent) {
   const clamped = Math.max(0, Math.min(100, percent || 0));
   progressFill.style.width = clamped + '%';
@@ -20,7 +23,6 @@ function setProgress(percent) {
 }
 
 function setStatus(state) {
-  // state: 'idle' | 'running' | 'complete' | 'error'
   statusChip.className = 'status-chip';
   if (state === 'running') {
     statusChip.classList.add('status-chip-running');
@@ -36,8 +38,6 @@ function setStatus(state) {
     statusChip.innerText = 'Idle';
   }
 }
-
-// ---------- THEME HANDLING ----------
 
 function applyTheme(theme) {
   const body = document.body;
@@ -75,20 +75,19 @@ themeToggle.addEventListener('click', toggleTheme);
   }
 })();
 
-// ---------- LIVE OUTPUT: STRUCTURED, COLOR-CODED ----------
-
 function clearResults() {
   resultsEl.innerHTML = '<div id="resultsEmpty">No results yet.</div>';
 }
 
 function addLogEntry({ title, message, severity = 'info' }) {
-  // severity: 'info' | 'success' | 'warn' | 'error' | 'worker'
   const empty = document.getElementById('resultsEmpty');
   if (empty) empty.remove();
 
+  // Create the log entry container with severity-based styling
   const container = document.createElement('div');
   container.className = 'log-entry log-entry--' + severity;
 
+  // Create header with title and timestamp
   const header = document.createElement('div');
   header.className = 'log-entry-header';
 
@@ -103,6 +102,7 @@ function addLogEntry({ title, message, severity = 'info' }) {
   header.appendChild(titleEl);
   header.appendChild(timeEl);
 
+  // Create message body
   const body = document.createElement('div');
   body.className = 'log-entry-body';
   body.textContent = message;
@@ -110,12 +110,12 @@ function addLogEntry({ title, message, severity = 'info' }) {
   container.appendChild(header);
   container.appendChild(body);
 
+  // Add to results container and auto-scroll to bottom
   resultsEl.appendChild(container);
   resultsEl.scrollTop = resultsEl.scrollHeight;
 }
 
-// ---------- HUMAN-READABLE SUMMARIES ----------
-
+// Result summarization: converts raw diagnostic data into human-readable summaries
 let baselineListeners = null;
 let afterListeners = null;
 
@@ -316,10 +316,7 @@ function shortenError(text) {
   return s;
 }
 
-// ---------- BUTTONS / IPC ----------
-
 runBtn.addEventListener('click', () => {
-  // Safely parse port → avoid NaN
   let port = parseInt(portEl.value, 10);
   if (!Number.isFinite(port) || port <= 0 || port > 65535) {
     port = 4840;
@@ -330,9 +327,7 @@ runBtn.addEventListener('click', () => {
     ? publishing
     : 250;
 
-  // Host/IP only (protocol is hardcoded in the worker)
   let server = serverEl.value.trim();
-  // Safety: if user pasted a full opc.tcp URL, strip the protocol part
   if (server.toLowerCase().startsWith('opc.tcp://')) {
     server = server.slice('opc.tcp://'.length);
   }
@@ -412,7 +407,7 @@ window.electronAPI.onProbeEvent((msg) => {
     case 'finished':
       addLogEntry({
         title: 'Worker',
-        severity: 'worker', // 👈 purple severity
+        severity: 'worker',
         message: 'The worker process has finished.'
       });
       if (progressPercentLabel.innerText !== '100%') {
@@ -433,26 +428,31 @@ window.electronAPI.onProbeEvent((msg) => {
 function handlePartialResult(payload) {
   if (!payload || typeof payload !== 'object') return;
 
+  // Display endpoint security analysis
   if (payload.endpoints) {
     const { severity, text } = summarizeEndpoints(payload.endpoints);
     addLogEntry({ title: 'Endpoint Security', severity, message: text });
   }
 
+  // Display baseline listening ports (before subscription)
   if (payload.beforeListeners) {
     const { severity, text } = summarizeBeforeListeners(payload.beforeListeners);
     addLogEntry({ title: 'Baseline Listeners', severity, message: text });
   }
 
+  // Display subscription creation result
   if (payload.subscriptionResult) {
     const { severity, text } = summarizeSubscriptionResult(payload.subscriptionResult);
     addLogEntry({ title: 'Subscription', severity, message: text });
   }
 
+  // Display listening ports after subscription (for comparison)
   if (payload.afterListeners) {
     const { severity, text } = summarizeAfterListeners(payload.afterListeners);
     addLogEntry({ title: 'Post-Subscription Listeners', severity, message: text });
   }
 
+  // Display server callback connection attempts
   if (payload.connections) {
     const { severity, text } = summarizeConnections(payload.connections);
     addLogEntry({ title: 'Server Callbacks', severity, message: text });
@@ -468,7 +468,6 @@ function handleErrorMessage(error) {
   });
 }
 
-// Final summary after result-final
 function handleFinalResult() {
   addLogEntry({
     title: 'Probe',

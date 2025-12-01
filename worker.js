@@ -1,4 +1,15 @@
-// Child process worker that performs the probe and sends messages to the parent via process.send
+/**
+ * Worker process - OPC-UA diagnostic operations
+ * Runs in separate Node.js process to keep UI responsive and isolate OPC-UA operations
+ * 
+ * Probe workflow:
+ * 1. Query OPC-UA server endpoints
+ * 2. Capture baseline listening ports (before subscription)
+ * 3. Create OPC-UA subscription and monitored item
+ * 4. Capture listening ports after subscription (identify callback listeners)
+ * 5. Monitor for incoming connections from server (callback attempts)
+ * 6. Write comprehensive log file with all results
+ */
 
 const { exec } = require('child_process');
 const fs = require('fs');
@@ -17,6 +28,7 @@ process.on('message', async (msg) => {
 
   const logPath = path.join(userDataPath, 'logs');
   try { fs.mkdirSync(logPath, { recursive: true }); } catch (e) {}
+  
   const logfile = path.join(
     logPath,
     `opcua-endpoint-diagnostic_${new Date().toISOString().replace(/[:.]/g,'-')}.log`
@@ -25,12 +37,11 @@ process.on('message', async (msg) => {
   const errors = [];
   const warnings = [];
 
+  // Dual logging: simple messages go to UI + file, detailed messages only to file
   function appendLog(text, isDetailed = false) {
-    // Only send simple messages to live output (for backward compatibility)
     if (!isDetailed) {
       send('log', { message: text });
     }
-    // Always write to log file
     fs.appendFileSync(logfile, `[${new Date().toISOString()}] ${text}\n`);
   }
 
@@ -128,7 +139,7 @@ process.on('message', async (msg) => {
   appendDetailedLog('Probe Configuration', config, 'Initial probe configuration parameters');
 
   try {
-    // Step 1: Query endpoints
+    // Step 1: Query OPC-UA server endpoints (security policy info)
     send('progress', { progress: 10, task: 'Querying endpoints' });
     appendLog('Querying endpoints');
     const endpointUrl = normalizeEndpoint(config.server, config.port);
@@ -139,7 +150,6 @@ process.on('message', async (msg) => {
       endpoints = await queryEndpoints(config.server, config.port);
       appendLog(`Successfully retrieved ${endpoints?.length || 0} endpoint(s)`);
       
-      // Detailed endpoint analysis
       if (endpoints && endpoints.length > 0) {
         const endpointSummary = {
           total: endpoints.length,
@@ -178,7 +188,7 @@ process.on('message', async (msg) => {
     
     send('result-partial', { payload: { endpoints } });
 
-    // Step 2: Record listening ports before subscription
+    // Step 2: Capture baseline listening ports (before subscription)
     send('progress', { progress: 25, task: 'Recording listening ports (before)' });
     appendLog('Capturing baseline listening ports');
     
@@ -209,7 +219,7 @@ process.on('message', async (msg) => {
     
     send('result-partial', { payload: { beforeListeners } });
 
-    // Step 3: Create subscription (attempt)
+    // Step 3: Create OPC-UA subscription (triggers callback listener ports)
     send('progress', { progress: 45, task: 'Creating subscription and monitored item' });
     appendLog('Creating subscription and monitored item');
     appendLog(`Target node: ${config.nodeId || 'ns=0;i=2258'}`);
@@ -234,7 +244,7 @@ process.on('message', async (msg) => {
     
     send('result-partial', { payload: { subscriptionResult } });
 
-    // Step 4: Record listening ports after subscription
+    // Step 4: Capture listening ports after subscription (identify new callback listeners)
     send('progress', { progress: 65, task: 'Recording listening ports (after)' });
     appendLog('Capturing listening ports after subscription');
     
@@ -282,7 +292,7 @@ process.on('message', async (msg) => {
     
     send('result-partial', { payload: { afterListeners } });
 
-    // Step 5: Monitor for incoming connections from server IP (30s)
+    // Step 5: Monitor for incoming connections from server (callback attempts, 30s)
     send('progress', { progress: 75, task: 'Monitoring incoming connection attempts (30s)' });
     appendLog('Monitoring incoming connections from server');
     const serverIp = extractHostFromEndpoint(config.server) || null;
@@ -332,10 +342,8 @@ process.on('message', async (msg) => {
     
     send('result-partial', { payload: { connections } });
 
-    // Final aggregation
     const final = { endpoints, beforeListeners, subscriptionResult, afterListeners, connections };
     
-    // Write comprehensive final summary
     appendLog('\n\n========== PROBE COMPLETION SUMMARY ==========', true);
     appendLog(`Probe completed at: ${new Date().toISOString()}`, true);
     appendLog(`Configuration: ${JSON.stringify(config)}`, true);
@@ -346,10 +354,7 @@ process.on('message', async (msg) => {
     appendLog(`Incoming connections detected: ${connections?.length || 0}`, true);
     appendLog(`========== END PROBE COMPLETION SUMMARY ==========\n`, true);
     
-    // Write error/warning summary
     writeErrorSummary();
-    
-    // Write complete final data dump
     appendDetailedLog('Complete Probe Results', final, 'Complete aggregated results from all probe steps');
     
     send('result-final', { payload: final });
@@ -370,7 +375,6 @@ process.on('message', async (msg) => {
   }
 });
 
-// ------------------------ Helper implementations ------------------------
 const { OPCUAClient, MessageSecurityMode, SecurityPolicy } = require('node-opcua');
 
 async function queryEndpoints(serverUrl, port) {
@@ -392,7 +396,7 @@ async function queryEndpoints(serverUrl, port) {
   }
 }
 
-// ---------------- HARD-CODED PROTOCOL HERE ----------------
+// Normalizes endpoint to opc.tcp://host:port format (handles various input formats)
 function normalizeEndpoint(server, port) {
   if (!server) throw new Error('server missing');
 
@@ -419,15 +423,11 @@ function normalizeEndpoint(server, port) {
     throw new Error('port missing');
   }
 
-  // At this point:
-  //   server = hostname/IP only
-  //   port   = numeric string
-  // Protocol is ALWAYS hard-coded here:
   return `opc.tcp://${server}:${port}`;
 }
 
+// Creates OPC-UA subscription to trigger callback listener ports
 async function createSubscriptionAndMonitor(cfg) {
-  // This function attempts to create a subscription and monitored item and returns data about the subscription.
   const endpointUrl = normalizeEndpoint(cfg.server, cfg.port);
   const client = OPCUAClient.create({ keepSessionAlive: true });
   let session, subscription;
@@ -450,10 +450,9 @@ async function createSubscriptionAndMonitor(cfg) {
       0
     );
 
-    // Wait a short while to allow socket/listener to appear
+    // Wait for callback listener ports to open
     await new Promise(resolve => setTimeout(resolve, 1500));
 
-    // clean up
     try { await subscription.terminate(); } catch(e){}
     try { await session.close(); } catch(e){}
     try { await client.disconnect(); } catch(e){}
@@ -467,7 +466,7 @@ async function createSubscriptionAndMonitor(cfg) {
   }
 }
 
-// ---------------- ROBUST HOST EXTRACTION ----------------
+// Extracts hostname/IP from various endpoint URL formats
 function extractHostFromEndpoint(endpoint) {
   if (!endpoint) return null;
 
@@ -492,6 +491,7 @@ function extractHostFromEndpoint(endpoint) {
   }
 }
 
+// Captures listening TCP ports using Windows netstat
 function getListeningPorts() {
   return new Promise((resolve, reject) => {
     exec('netstat -ano', { windowsHide: true }, (err, stdout) => {
@@ -500,7 +500,6 @@ function getListeningPorts() {
       const listeners = [];
       for (const line of lines) {
         const parts = line.trim().split(/\s+/);
-        // Expected: Proto  Local Address  Foreign Address  State  PID
         if (parts.length >= 5) {
           const proto = parts[0];
           const local = parts[1];
@@ -525,8 +524,9 @@ function parseAddressPort(text) {
   return [addr, port];
 }
 
+// Monitors for incoming TCP connections from server (callback attempts)
+// Polls netstat every 2s for connections from serverIp
 function monitorConnectionAttempts(serverIp, serverPort, durationMs) {
-  // Fallback implementation: poll netstat every 2s for connections from serverIp to any local port
   const polls = Math.ceil(durationMs / 2000);
   const found = [];
 
@@ -547,7 +547,6 @@ function monitorConnectionAttempts(serverIp, serverPort, durationMs) {
               if (serverIp && remote.includes(serverIp)) {
                 const [rAddr, rPort] = parseAddressPort(remote);
                 const [lAddr, lPort] = parseAddressPort(local);
-                // record TCP states and timestamps
                 found.push({
                   timestamp: new Date().toISOString(),
                   proto,
