@@ -41,8 +41,8 @@ process.on('message', async (msg) => {
     }
     if (data !== null && data !== undefined) {
       try {
-        const jsonStr = JSON.stringify(data, null, 2);
-        appendLog(`Detailed Data:\n${jsonStr}`, true);
+        const jsonStr = JSON.stringify(data);
+        appendLog(`Detailed Data: ${jsonStr}`, true);
       } catch (e) {
         appendLog(`Detailed Data (stringified): ${String(data)}`, true);
       }
