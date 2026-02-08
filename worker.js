@@ -14,8 +14,6 @@
 const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-let config = null;
-let userDataPath = null;
 
 function send(type, payload = {}) {
   try { process.send({ type, ...payload }); } catch (e) { /* parent may have closed */ }
@@ -23,8 +21,8 @@ function send(type, payload = {}) {
 
 process.on('message', async (msg) => {
   if (!msg || msg.type !== 'start') return;
-  config = msg.config;
-  userDataPath = msg.userDataPath;
+  const config = msg.config;
+  const userDataPath = msg.userDataPath;
 
   const logPath = path.join(userDataPath, 'logs');
   try { fs.mkdirSync(logPath, { recursive: true }); } catch (e) {}
@@ -607,7 +605,7 @@ process.on('message', async (msg) => {
   }
 });
 
-const { OPCUAClient, MessageSecurityMode, SecurityPolicy } = require('node-opcua');
+const { OPCUAClient } = require('node-opcua');
 
 async function queryEndpoints(serverUrl, port) {
   const endpointUrl = normalizeEndpoint(serverUrl, port);
@@ -676,7 +674,7 @@ async function createSubscriptionAndMonitor(cfg) {
     });
 
     const itemToMonitor = cfg.nodeId || 'ns=0;i=2258';
-    const monitoredItem = await subscription.monitor(
+    await subscription.monitor(
       { nodeId: itemToMonitor, attributeId: 13 },
       { samplingInterval: cfg.publishingInterval || 250, discardOldest: true, queueSize: 10 },
       0
