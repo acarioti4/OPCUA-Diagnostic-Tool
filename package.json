@@ -1,6 +1,6 @@
 {
     "name": "opcua-endpoint-diagnostics",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "A Windows desktop tool that verifies and troubleshoots connectivity between OPC UA clients and servers, testing endpoint security and callback paths.",
     "author": "github.com/acarioti4",
     "main": "main.js",

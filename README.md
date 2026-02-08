@@ -26,8 +26,8 @@ It is designed for situations where a basic “client can connect” check is no
     - Modern AES-based policies
 
 - **Subscription & Monitored Item Test**
-  - Creates a subscription with a configurable publishing interval
-  - Monitors a specified NodeId (or a default status node)
+  - Creates a subscription with a configurable publishing interval (default: 250ms)
+  - Monitors a specified NodeId (default: `ns=0;i=2258`, ServerStatus_CurrentTime)
   - Verifies that the server accepts subscriptions on the selected endpoint
 
 - **Listening Port Comparison**
@@ -45,7 +45,8 @@ It is designed for situations where a basic “client can connect” check is no
     - What was tested
     - What happened
     - Why it matters for connectivity
-  - A detailed log file is also written for deep-dive troubleshooting
+  - A detailed log file is written to `%APPDATA%\opcua-endpoint-diagnostics\logs` for deep-dive troubleshooting
+    - Default path: `C:\Users\<Username>\AppData\Roaming\opcua-endpoint-diagnostics\logs`
 
 ---
 
@@ -66,7 +67,8 @@ When you click **“Run Callback Path Probe”**, the app:
    - Stores this as the “before subscription” baseline.
 
 4. **Creates a subscription and monitored item**
-   - Uses the configured publishing interval and NodeId.
+   - Uses the configured publishing interval (default 250ms) and NodeId (default `ns=0;i=2258`).
+   - Connects to the specified port (default 4840).
    - Waits briefly to allow any callback-related sockets to be opened by the OPC UA stack.
 
 5. **Captures post-subscription listening ports**
@@ -74,7 +76,7 @@ When you click **“Run Callback Path Probe”**, the app:
    - Compares against the baseline to see if any new listening ports appeared.
 
 6. **Monitors incoming connections from the server**
-   - Polls `netstat` every few seconds for a short period.
+   - Polls `netstat` every 2 seconds for 30 seconds (15 polls).
    - Filters entries by the server’s IP address.
    - Records any incoming connection attempts (including state and ports).
 
@@ -101,9 +103,10 @@ The application uses a simple, robust separation of concerns:
   - HTML/CSS/JS front-end displayed in the Electron window.
   - Handles:
     - Form inputs (server endpoint, port, NodeId, publishing interval)
-    - Running and canceling probes
+    - Running and canceling probes (keyboard shortcut: **Ctrl+Enter** to start)
     - Progress bar and current task status
-    - Live, human-readable output for each phase of the probe
+    - Live, color-coded output for each phase (blue=info, green=success, yellow=warn, red=error)
+    - Light/dark theme toggle (preference saved across sessions)
   - Communicates with the main process via an IPC bridge in `preload.js`.
 
 - **Worker (`worker.js`)**
@@ -132,3 +135,16 @@ The application uses a simple, robust separation of concerns:
 
    ```bash
    npm install
+   ```
+
+3. Run the application:
+
+   ```bash
+   npm start
+   ```
+
+4. *(Optional)* Build a distributable package:
+
+   ```bash
+   npm run build
+   ```
