@@ -375,7 +375,7 @@ process.on('message', async (msg) => {
   }
 });
 
-const { OPCUAClient, MessageSecurityMode, SecurityPolicy } = require('node-opcua');
+const { OPCUAClient } = require('node-opcua');
 
 async function queryEndpoints(serverUrl, port) {
   const endpointUrl = normalizeEndpoint(serverUrl, port);
@@ -444,7 +444,7 @@ async function createSubscriptionAndMonitor(cfg) {
     });
 
     const itemToMonitor = cfg.nodeId || 'ns=0;i=2258';
-    const monitoredItem = await subscription.monitor(
+    await subscription.monitor(
       { nodeId: itemToMonitor, attributeId: 13 },
       { samplingInterval: cfg.publishingInterval || 250, discardOldest: true, queueSize: 10 },
       0
