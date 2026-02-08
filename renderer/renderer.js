@@ -295,11 +295,11 @@ function summarizeConnections(connections) {
   const total = connections.length;
   const last = connections[connections.length - 1];
 
-  const src = (last.remoteAddress || last.srcAddress || 'server');
-  const srcPort = (last.remotePort || last.srcPort || '');
-  const dst = (last.localAddress || last.dstAddress || 'this machine');
-  const dstPort = (last.localPort || last.dstPort || '');
-  const state = last.state || (last.synOnly ? 'SYN' : 'unknown');
+  const src = (last.remoteAddress || 'server');
+  const srcPort = (last.remotePort || '');
+  const dst = (last.localAddress || 'this machine');
+  const dstPort = (last.localPort || '');
+  const state = (last.state || 'unknown');
 
   const details = `One example connection was from ${src}${srcPort ? ':' + srcPort : ''} to ${dst}${dstPort ? ':' + dstPort : ''} with state "${state}".`;
 
