@@ -45,20 +45,270 @@ process.on('message', async (msg) => {
     fs.appendFileSync(logfile, `[${new Date().toISOString()}] ${text}\n`);
   }
 
-  function appendDetailedLog(title, data, summary = null) {
-    appendLog(`\n========== ${title} ==========`, true);
-    if (summary) {
-      appendLog(`Summary: ${summary}`, true);
+  // --- Utility helpers for formatted log output ---
+
+  function formatTable(headers, rows, indent = '    ') {
+    const lines = [];
+    const headerLine = headers.map(h => String(h.label).padEnd(h.width)).join('  ');
+    const separatorLine = headers.map(h => '-'.repeat(h.width)).join('  ');
+    lines.push(indent + headerLine);
+    lines.push(indent + separatorLine);
+    for (const row of rows) {
+      const cells = headers.map((h, i) => {
+        const val = String(row[i] ?? '');
+        return val.length > h.width ? val.slice(0, h.width - 2) + '..' : val.padEnd(h.width);
+      });
+      lines.push(indent + cells.join('  '));
     }
-    if (data !== null && data !== undefined) {
-      try {
-        const jsonStr = JSON.stringify(data);
-        appendLog(`Detailed Data: ${jsonStr}`, true);
-      } catch (e) {
-        appendLog(`Detailed Data (stringified): ${String(data)}`, true);
+    return lines;
+  }
+
+  function securityModeToString(mode) {
+    if (typeof mode === 'string') return mode;
+    const map = { 0: 'Invalid', 1: 'None', 2: 'Sign', 3: 'SignAndEncrypt' };
+    return map[mode] ?? String(mode);
+  }
+
+  function tokenTypeToString(type) {
+    if (typeof type === 'string') return type;
+    const map = { 0: 'Anonymous', 1: 'UserName', 2: 'Certificate', 3: 'IssuedToken' };
+    return map[type] ?? String(type);
+  }
+
+  function shortenPolicyUri(uri) {
+    if (!uri) return 'Unknown';
+    const idx = uri.lastIndexOf('#');
+    return idx >= 0 ? uri.slice(idx + 1) : uri;
+  }
+
+  // --- Section formatters (file-only output) ---
+
+  function formatProbeConfig(cfg) {
+    appendLog('', true);
+    appendLog('========== Probe Configuration ==========', true);
+    appendLog(`  Server:               ${cfg.server || 'N/A'}`, true);
+    appendLog(`  Port:                 ${cfg.port || 'N/A'}`, true);
+    appendLog(`  Node ID:              ${cfg.nodeId || 'ns=0;i=2258'}`, true);
+    appendLog(`  Publishing Interval:  ${cfg.publishingInterval || 250} ms`, true);
+    appendLog('========== End Probe Configuration ==========', true);
+    appendLog('', true);
+  }
+
+  function formatEndpointResults(endpointUrl, endpoints, endpointSummary) {
+    appendLog('', true);
+    appendLog('========== Endpoint Query Results ==========', true);
+    appendLog(`  Endpoint URL:  ${endpointUrl}`, true);
+    appendLog(`  Total Found:   ${endpoints?.length || 0}`, true);
+
+    if (!endpoints || endpoints.length === 0) {
+      appendLog('', true);
+      appendLog('  Note: No endpoints found - server may be unreachable or endpoint URL incorrect', true);
+      appendLog('========== End Endpoint Query Results ==========', true);
+      appendLog('', true);
+      return;
+    }
+
+    // Security summary
+    if (endpointSummary) {
+      appendLog('', true);
+      appendLog('  Security Summary:', true);
+      if (endpointSummary.securityPolicies && Object.keys(endpointSummary.securityPolicies).length > 0) {
+        appendLog('    Policies:', true);
+        const maxLen = Math.max(...Object.keys(endpointSummary.securityPolicies).map(k => shortenPolicyUri(k).length));
+        for (const [uri, count] of Object.entries(endpointSummary.securityPolicies)) {
+          const name = shortenPolicyUri(uri);
+          const dots = '.'.repeat(Math.max(2, maxLen - name.length + 3));
+          appendLog(`      ${name} ${dots} ${count} endpoint(s)`, true);
+        }
+      }
+      if (endpointSummary.securityModes && Object.keys(endpointSummary.securityModes).length > 0) {
+        appendLog('    Modes:', true);
+        const maxLen = Math.max(...Object.keys(endpointSummary.securityModes).map(k => securityModeToString(k).length));
+        for (const [mode, count] of Object.entries(endpointSummary.securityModes)) {
+          const name = securityModeToString(mode);
+          const dots = '.'.repeat(Math.max(2, maxLen - name.length + 3));
+          appendLog(`      ${name} ${dots} ${count} endpoint(s)`, true);
+        }
+      }
+      if (endpointSummary.userTokenTypes && endpointSummary.userTokenTypes.length > 0) {
+        appendLog(`    User Token Types: ${endpointSummary.userTokenTypes.map(t => tokenTypeToString(t)).join(', ')}`, true);
       }
     }
-    appendLog(`========== End ${title} ==========\n`, true);
+
+    // Endpoint table
+    appendLog('', true);
+    appendLog('  Endpoint Details:', true);
+    const headers = [
+      { label: '#', width: 3 },
+      { label: 'URL', width: 31 },
+      { label: 'Security Policy', width: 22 },
+      { label: 'Mode', width: 16 },
+      { label: 'Tokens', width: 24 }
+    ];
+    const rows = endpoints.map((ep, i) => [
+      String(i + 1),
+      ep.endpointUrl || '',
+      shortenPolicyUri(ep.securityPolicyUri),
+      securityModeToString(ep.securityMode),
+      (ep.userIdentityTokens || []).map(t => tokenTypeToString(t)).join(', ')
+    ]);
+    for (const line of formatTable(headers, rows)) {
+      appendLog(line, true);
+    }
+
+    appendLog('========== End Endpoint Query Results ==========', true);
+    appendLog('', true);
+  }
+
+  function formatListeningPorts(sectionTitle, listeners, portSummary) {
+    appendLog('', true);
+    appendLog(`========== ${sectionTitle} ==========`, true);
+    appendLog(`  Captured At:       ${new Date().toISOString()}`, true);
+    appendLog(`  Total Sockets:     ${portSummary.total}`, true);
+    appendLog(`  Unique Ports:      ${portSummary.uniquePorts.length}`, true);
+    const addrPreview = portSummary.uniqueAddresses.slice(0, 5).join(', ');
+    const addrExtra = portSummary.uniqueAddresses.length > 5 ? ', ...' : '';
+    appendLog(`  Unique Addresses:  ${portSummary.uniqueAddresses.length}  (${addrPreview}${addrExtra})`, true);
+    appendLog(`  Protocols:         ${portSummary.protocols.join(', ') || 'N/A'}`, true);
+    const pidPreview = portSummary.pids.slice(0, 10).join(', ');
+    const pidExtra = portSummary.pids.length > 10 ? ', ...' : '';
+    appendLog(`  PIDs:              ${pidPreview}${pidExtra}`, true);
+
+    appendLog('', true);
+    appendLog('  Listening Sockets:', true);
+    const headers = [
+      { label: 'Proto', width: 5 },
+      { label: 'Local Address', width: 21 },
+      { label: 'Port', width: 6 },
+      { label: 'PID', width: 6 }
+    ];
+    const rows = (listeners || []).map(l => [
+      l.proto || '',
+      l.localAddress || '',
+      l.localPort || '',
+      l.pid || ''
+    ]);
+    for (const line of formatTable(headers, rows)) {
+      appendLog(line, true);
+    }
+
+    // Don't close the section here if port comparison will follow
+    return sectionTitle; // caller decides when to close
+  }
+
+  function closeSection(sectionTitle) {
+    appendLog(`========== End ${sectionTitle} ==========`, true);
+    appendLog('', true);
+  }
+
+  function formatPortComparison(beforeCount, afterCount, newPorts, removedPorts) {
+    appendLog('', true);
+    appendLog('  Port Comparison (Before vs After Subscription):', true);
+    const change = afterCount - beforeCount;
+    const changeStr = change >= 0 ? `+${change}` : String(change);
+    appendLog(`    Before:  ${beforeCount} listening socket(s)`, true);
+    appendLog(`    After:   ${afterCount} listening socket(s)`, true);
+    appendLog(`    Change:  ${changeStr}`, true);
+
+    appendLog('', true);
+    appendLog(`    New Ports Detected (${newPorts.length}):`, true);
+    if (newPorts.length > 0) {
+      for (const p of newPorts) {
+        appendLog(`      >> ${p}`, true);
+      }
+    } else {
+      appendLog('      (none)', true);
+    }
+
+    appendLog('', true);
+    appendLog(`    Removed Ports (${removedPorts.length}):`, true);
+    if (removedPorts.length > 0) {
+      for (const p of removedPorts) {
+        appendLog(`      << ${p}`, true);
+      }
+    } else {
+      appendLog('      (none)', true);
+    }
+  }
+
+  function formatSubscriptionResult(result) {
+    appendLog('', true);
+    appendLog('========== Subscription Result ==========', true);
+    if (result.success) {
+      appendLog('  Status:          SUCCESS', true);
+      appendLog(`  Node Monitored:  ${result.nodeMonitored || 'N/A'}`, true);
+    } else {
+      appendLog('  Status:  FAILED', true);
+      appendLog(`  Error:   ${result.error || 'Unknown error'}`, true);
+    }
+    appendLog('========== End Subscription Result ==========', true);
+    appendLog('', true);
+  }
+
+  function formatConnectionResults(serverIp, serverPort, connections, connSummary) {
+    appendLog('', true);
+    appendLog('========== Incoming Connection Monitoring Results ==========', true);
+    appendLog(`  Server IP:           ${serverIp || 'Unknown'}`, true);
+    appendLog(`  Server Port:         ${serverPort || 'Unknown'}`, true);
+    appendLog('  Monitoring Duration: 30 seconds', true);
+    appendLog(`  Connections Found:   ${connections?.length || 0}`, true);
+
+    if (!connections || connections.length === 0) {
+      appendLog('', true);
+      appendLog(`  Note: No incoming connections detected from server IP ${serverIp || 'Unknown'}`, true);
+      appendLog('        Server may not be attempting callbacks, or a firewall may be blocking traffic.', true);
+      appendLog('========== End Incoming Connection Monitoring Results ==========', true);
+      appendLog('', true);
+      return;
+    }
+
+    // Connection summary
+    if (connSummary) {
+      appendLog('', true);
+      appendLog('  Connection Summary:', true);
+      const raPreview = (connSummary.uniqueRemoteAddresses || []).slice(0, 5).join(', ');
+      appendLog(`    Unique Remote Addresses:  ${connSummary.uniqueRemoteAddresses?.length || 0}  (${raPreview})`, true);
+      const lpPreview = (connSummary.uniqueLocalPorts || []).slice(0, 10).join(', ');
+      appendLog(`    Unique Local Ports:       ${connSummary.uniqueLocalPorts?.length || 0}  (${lpPreview})`, true);
+      appendLog(`    Connection States:        ${(connSummary.uniqueStates || []).join(', ') || 'N/A'}`, true);
+      appendLog(`    PIDs:                     ${(connSummary.uniquePids || []).join(', ') || 'N/A'}`, true);
+      if (connSummary.timeRange) {
+        const first = connSummary.timeRange.first ? connSummary.timeRange.first.replace(/.*T/, '').replace(/\.\d+Z$/, '') : '?';
+        const last = connSummary.timeRange.last ? connSummary.timeRange.last.replace(/.*T/, '').replace(/\.\d+Z$/, '') : '?';
+        appendLog(`    Time Range:               ${first} - ${last}`, true);
+      }
+    }
+
+    // Connection table
+    appendLog('', true);
+    appendLog('  Connection Details:', true);
+    const headers = [
+      { label: '#', width: 3 },
+      { label: 'Time', width: 8 },
+      { label: 'Proto', width: 5 },
+      { label: 'Local', width: 21 },
+      { label: 'Remote', width: 21 },
+      { label: 'State', width: 13 },
+      { label: 'PID', width: 6 }
+    ];
+    const rows = connections.map((c, i) => {
+      const time = c.timestamp ? c.timestamp.replace(/.*T/, '').replace(/\.\d+Z$/, '') : '';
+      return [
+        String(i + 1),
+        time,
+        c.proto || '',
+        `${c.localAddress || ''}:${c.localPort || ''}`,
+        `${c.remoteAddress || ''}:${c.remotePort || ''}`,
+        c.state || '',
+        c.pid || ''
+      ];
+    });
+    for (const line of formatTable(headers, rows)) {
+      appendLog(line, true);
+    }
+
+    appendLog('========== End Incoming Connection Monitoring Results ==========', true);
+    appendLog('', true);
   }
 
   function logError(error, context = '') {
@@ -136,7 +386,7 @@ process.on('message', async (msg) => {
   }
 
   appendLog('Probe started');
-  appendDetailedLog('Probe Configuration', config, 'Initial probe configuration parameters');
+  formatProbeConfig(config);
 
   try {
     // Step 1: Query OPC-UA server endpoints (security policy info)
@@ -171,15 +421,10 @@ process.on('message', async (msg) => {
         
         endpointSummary.userTokenTypes = Array.from(userTokenTypesSet);
         
-        appendDetailedLog('Endpoint Query Results', {
-          endpointUrl,
-          endpointCount: endpoints.length,
-          summary: endpointSummary,
-          endpoints: endpoints
-        }, `Found ${endpoints.length} endpoint(s) from ${endpointUrl}`);
+        formatEndpointResults(endpointUrl, endpoints, endpointSummary);
       } else {
         logWarning('No endpoints returned from server', 'Endpoint Query');
-        appendDetailedLog('Endpoint Query Results', { endpointUrl, endpoints: [] }, 'No endpoints found - server may be unreachable or endpoint URL incorrect');
+        formatEndpointResults(endpointUrl, [], null);
       }
     } catch (err) {
       logError(err, 'Endpoint Query');
@@ -206,11 +451,8 @@ process.on('message', async (msg) => {
         pids: [...new Set(beforeListeners.map(l => l.pid))].filter(p => p)
       };
       
-      appendDetailedLog('Baseline Listening Ports', {
-        timestamp: new Date().toISOString(),
-        summary: portSummary,
-        listeners: beforeListeners
-      }, `Baseline: ${portCount} listening socket(s) on ${portSummary.uniquePorts.length} unique port(s)`);
+      formatListeningPorts('Baseline Listening Ports', beforeListeners, portSummary);
+      closeSection('Baseline Listening Ports');
     } catch (err) {
       logError(err, 'Baseline Port Capture');
       beforeListeners = [];
@@ -231,15 +473,15 @@ process.on('message', async (msg) => {
       
       if (subscriptionResult.success) {
         appendLog(`Subscription created successfully, monitored node: ${subscriptionResult.nodeMonitored}`);
-        appendDetailedLog('Subscription Result', subscriptionResult, 'Subscription and monitored item created successfully');
+        formatSubscriptionResult(subscriptionResult);
       } else {
         logError(new Error(subscriptionResult.error || 'Subscription failed'), 'Subscription Creation');
-        appendDetailedLog('Subscription Result', subscriptionResult, 'Subscription creation failed');
+        formatSubscriptionResult(subscriptionResult);
       }
     } catch (err) {
       logError(err, 'Subscription Creation');
       subscriptionResult = { success: false, error: String(err) };
-      appendDetailedLog('Subscription Result', subscriptionResult, 'Exception during subscription creation');
+      formatSubscriptionResult(subscriptionResult);
     }
     
     send('result-partial', { payload: { subscriptionResult } });
@@ -273,17 +515,9 @@ process.on('message', async (msg) => {
         }
       };
       
-      appendDetailedLog('Post-Subscription Listening Ports', {
-        timestamp: new Date().toISOString(),
-        summary: portSummary,
-        listeners: afterListeners,
-        baselineComparison: {
-          beforeCount: beforeListeners?.length || 0,
-          afterCount: portCount,
-          newPortsCount: newPorts.length,
-          removedPortsCount: removedPorts.length
-        }
-      }, `After subscription: ${portCount} listening socket(s), ${newPorts.length} new port(s) detected`);
+      formatListeningPorts('Post-Subscription Listening Ports', afterListeners, portSummary);
+      formatPortComparison(beforeListeners?.length || 0, portCount, newPorts, removedPorts);
+      closeSection('Post-Subscription Listening Ports');
     } catch (err) {
       logError(err, 'Post-Subscription Port Capture');
       afterListeners = [];
@@ -319,20 +553,9 @@ process.on('message', async (msg) => {
           }
         };
         
-        appendDetailedLog('Incoming Connection Monitoring Results', {
-          serverIp,
-          serverPort,
-          monitoringDuration: '30 seconds',
-          summary: connSummary,
-          connections: connections
-        }, `Detected ${connCount} incoming connection attempt(s) from server IP ${serverIp}`);
+        formatConnectionResults(serverIp, serverPort, connections, connSummary);
       } else {
-        appendDetailedLog('Incoming Connection Monitoring Results', {
-          serverIp,
-          serverPort,
-          monitoringDuration: '30 seconds',
-          connections: []
-        }, `No incoming connections detected from server IP ${serverIp} - server may not be attempting callbacks or firewall may be blocking`);
+        formatConnectionResults(serverIp, serverPort, [], null);
       }
     } catch (err) {
       logError(err, 'Connection Monitoring');
@@ -344,28 +567,37 @@ process.on('message', async (msg) => {
 
     const final = { endpoints, beforeListeners, subscriptionResult, afterListeners, connections };
     
-    appendLog('\n\n========== PROBE COMPLETION SUMMARY ==========', true);
-    appendLog(`Probe completed at: ${new Date().toISOString()}`, true);
-    appendLog(`Configuration: ${JSON.stringify(config)}`, true);
-    appendLog(`Endpoints found: ${endpoints?.length || 0}`, true);
-    appendLog(`Baseline listeners: ${beforeListeners?.length || 0}`, true);
-    appendLog(`Post-subscription listeners: ${afterListeners?.length || 0}`, true);
-    appendLog(`Subscription success: ${subscriptionResult?.success ? 'Yes' : 'No'}`, true);
-    appendLog(`Incoming connections detected: ${connections?.length || 0}`, true);
-    appendLog(`========== END PROBE COMPLETION SUMMARY ==========\n`, true);
+    appendLog('', true);
+    appendLog('========== PROBE COMPLETION SUMMARY ==========', true);
+    appendLog(`  Probe Completed At:          ${new Date().toISOString()}`, true);
+    appendLog(`  Server:                      ${config.server || 'N/A'}`, true);
+    appendLog(`  Port:                        ${config.port || 'N/A'}`, true);
+    appendLog(`  Node ID:                     ${config.nodeId || 'ns=0;i=2258'}`, true);
+    appendLog(`  Publishing Interval:         ${config.publishingInterval || 250} ms`, true);
+    appendLog(`  Endpoints Found:             ${endpoints?.length || 0}`, true);
+    appendLog(`  Baseline Listeners:          ${beforeListeners?.length || 0}`, true);
+    appendLog(`  Post-Subscription Listeners: ${afterListeners?.length || 0}`, true);
+    appendLog(`  Subscription Success:        ${subscriptionResult?.success ? 'Yes' : 'No'}`, true);
+    appendLog(`  Incoming Connections:         ${connections?.length || 0}`, true);
+    appendLog('========== END PROBE COMPLETION SUMMARY ==========', true);
+    appendLog('', true);
     
     writeErrorSummary();
-    appendDetailedLog('Complete Probe Results', final, 'Complete aggregated results from all probe steps');
-    
+
     send('result-final', { payload: final });
     appendLog('Probe finished successfully');
     process.exit(0);
   } catch (err) {
     logError(err, 'Probe Execution');
-    appendLog('\n\n========== PROBE FAILED ==========', true);
-    appendLog(`Probe failed at: ${new Date().toISOString()}`, true);
-    appendLog(`Configuration: ${JSON.stringify(config)}`, true);
-    appendLog(`========== END PROBE FAILED ==========\n`, true);
+    appendLog('', true);
+    appendLog('========== PROBE FAILED ==========', true);
+    appendLog(`  Failed At:           ${new Date().toISOString()}`, true);
+    appendLog(`  Server:              ${config.server || 'N/A'}`, true);
+    appendLog(`  Port:                ${config.port || 'N/A'}`, true);
+    appendLog(`  Node ID:             ${config.nodeId || 'ns=0;i=2258'}`, true);
+    appendLog(`  Publishing Interval: ${config.publishingInterval || 250} ms`, true);
+    appendLog('========== END PROBE FAILED ==========', true);
+    appendLog('', true);
     
     // Write error/warning summary
     writeErrorSummary();
